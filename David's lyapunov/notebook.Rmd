@@ -1,0 +1,185 @@
+---
+title: "Rosenstein Method"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+# 1. Introduction
+
+* For a dynamical system, sensitivity to initial conditions is quantified by the **Lyapunov exponents**. These measure the rates of expansion or contraction of the principle axes of a **phase space**. In phase space every parameter of a system is represented as an axis and so a system's evolving state may be ploted as a line (trajectory) from the initial condition to its current state.
+* When two trajectories with **nearby conditions** on a manifold diverge, the largest Lyapunov exponent of the system is positive. The overall system may be still have an attractor but this can only be determined from the sum of the Lyapunov spectrum i.e. the sum of all Lyapunov exponents.
+* When two trajectories with nearby conditions on a manifold converge, the largest Lyapunov exponent of the system is negative.
+
+# 2. Problem
+* When the equations describing a dynamical system are available once can calculate the entire Lyapunov spectrum. The approach involves solving the systems n equations with n+1 nearby initial conditions.
+* When only a single time series is available (only historic data) the standard approach cannot be used, therefore a data driven approach that reconstructs the attractor dynamics from a single time series is required. The **Rosenstein method** is provides a way of doing this.
+
+# 3. Rosenstein Method
+## Step 1 - Reconstruct attractor dynamics
+* Reconstruct attractor dynamics using the **method of delays** to construct a phase-space matrix.
+$$ X = [X_1, X_2, ..., X_M]^T $$
+
+$$X_i = [x_i, x_{i+J}, ..., x_{i+(m-1)J}] $$
+
+* $X_i$ is the state of the system a discrete time i.
+* $x_i$ is the value of the observed time series at time i.
+* $x_{i+J}$ is the value of the observed time series at time $(i+J)$ where J is a fixed *reconstruction delay* or lag.
+* $x_{i+(m-1)J}$ is the value of the observed time series at time $i+(m-1)J$ where where J is a fixed **reconstruction delay** and m is a fixed **embedding dimension**
+
+* The reconstruction delay and embedding dimension are both estimated prior to constructing the phase-space matrix $X$.
+
+* The **embedding dimension** ($m$) is estimated using Takens' theorem which claims $m > 2n$ where $n$ is the **box counting dimension** of a system, although the algorithm works in practice for smaller m.
+
+* The **reconstruction delay** ($J$) may be estimated using drops in  autocorrelation i.e. where the autocorrelation function drops to $1-1/e = 0.6321206$ of initial value.
+
+## Step 2 - Find pairs of nearby conditions
+* For each $X_i$ (system state at time i) find its closest eligible nearest neighbour that has a separation greater than the *mean period of the time series* i.e. "close in phase space but not too close in time". The *mean period of the time series* $\mu$ can be calculated as 1 / mean frequency of the power spectrum.
+* The distance between a state $X_i$ and an eligible state $X_e$ is calculated as $$d_e = ||X_i - X_e||$$. The closest eligible nearest neighbour is the eligible state $X_e$ which is the shortest distance $d(i)$ away.
+* A state $X_i$ is an eligible state $X_e$ if $|i - e| > \mu$
+
+## Step 3 - Estimate mean rate of seperation of nearest neighbours
+* Given that nearest neighbour pairs j diverge at approximately the rate of the largest Lyapunov exponent:
+$$ d_j(i) \approx C_je^{\lambda (i.\Delta t)} $$
+where $C_j$ is the initial seperation of pair j.
+$$ \ln d_j(i) \approx \ln C_j + \lambda (i.\Delta t) $$
+$$ \mathbb{E_j} \ln d_j(i) \approx \mathbb{E_j} \ln C_j + \mathbb{E_j} \lambda (i.\Delta t) $$
+$$ \mathbb{E_j} \ln d_j(i) \approx \mathbb{E_j} \ln C_j + \lambda (i.\Delta t) $$
+
+## Step 4 - Use linear regression to estimate $\lambda$
+$$ \mathbb{E_j} \ln d_j(i) \approx \mathbb{E_j} \ln C_j + \lambda (i.\Delta t) $$
+The above is in the form of a linear regression where $Y = \alpha + \beta X$ and hence $Y$ is a vector of $ \mathbb{E_j} \ln d_j(i)$ for every pair $j$, $alpha$ is the mean seperation distance $ \mathbb{E_j} (\ln C_j)$ and $beta$ is $\lambda$ and $X$ is a vector of $i.\Delta t$.
+
+# 4. Experimental Results
+## 4.1 Logistic System
+### 4.1.1 Create code for logistic system
+Equation of the logistic system:
+$$ x_{i+1} = \mu x_i(1-x_i) $$
+```{r}
+# logistic map - difference equation
+logistic <- function(x, mu) {
+    return(mu * x * (1 - x))
+}
+
+# trajectory generator
+generate_trajectory <- function(mu, x0 = 1e-99, length = 500) {
+  x <- rep(0, length)
+  x[1] <- x0
+  for (t in 1:(length(x)-1)) {
+    x[t+1] <- logistic(x[t], mu)
+  }
+  return(x)
+}
+
+growth_rate <- seq(0, 4, 0.0004)
+population <- sapply(growth_rate, FUN = function(x) {
+  tail(generate_trajectory(x),1)
+  })
+
+plot(growth_rate, population, col = "red", pch = ".:",
+     main = "Bifurcation Diagram for Logistic Map")
+```
+
+### 4.1.2 Generate a single trajectory for Logistic System
+From Rosenstein paper generate a Logistic trajectory with following properties.
+
+* System Parameters: $\mu = 4.0$, Expected $\lambda = 0.693$
+* Dataset length: $N = 500$
+* Solver parameters: $\Delta t = 1$, 
+
+
+```{r}
+x_obs <- generate_trajectory(mu = 4.0, x0 = 0.1, length = 500)
+plot(1:length(x_obs), x_obs, type = "l", xlab = "Time", ylab = "Population",
+     main = "Logistic Trajectory")
+```
+
+### 4.1.3 Estimate Lyapunov exponent using Rosenstein approach
+
+#### Step 1 - Reconstruct attractor dynamics
+* Estimator parameters: $J = 1$, $m = 1:5$.
+```{r}
+J <- 1
+m <- 2
+M <- length(x_obs) - (m-1)*J
+X <- matrix(data = NA, nrow = M, ncol = m)
+
+for (i in 1:M) {
+  idx <- seq(from = i, to = i + (m-1)*J, by = J)  
+  X[i,] <- x_obs[idx]
+}
+
+head(X)
+```
+#### 
+
+#### Step 2 - Find pairs of nearby conditions
+```{r}
+library(magrittr)
+# Euclidean distance
+distance <- function(xe, xi) {
+  (xi - xe)^2 %>% sum %>% sqrt
+}
+
+# get Nearest neighbour for row xi
+getNearestNeighbour <- function(xi, X, mu, timeSteps = 50) {
+
+  xes <- 1:(nrow(X) - timeSteps) # when there is a match ensure enough time steps to measure divergence
+  ds <- sapply(xes, FUN = function(xe) {
+                distance(xe = X[xe,], xi = X[xi,])
+              })
+
+  ds <- ifelse(ds == 0, Inf, ds) #if distance zero then vector is identical so set distance to Inf
+  
+  # set distance to Inf if |xi-xe| < mu
+  ds <- ifelse(abs(xi - xes) < mu, Inf, ds) #if distance is less than mu then too close so set distance to Inf
+  
+  which.min(ds) 
+}
+
+# get nearest neighbours for every row
+getNearestNeighbours <- function(X, mu = 0) {
+  sapply(1:nrow(X), FUN = getNearestNeighbour, X, mu)
+}
+
+meanperiod <- function(ts) {
+  w <- spectrum(ts)$spec / sum(spectrum(ts)$spec)
+  mean_frequency <- weighted.mean(spectrum(ts)$freq, w)
+  1 / mean_frequency
+}
+
+j <- getNearestNeighbours(X, mu = meanperiod(x_obs))
+
+```
+
+#### Step 3 - Estimate mean rate of seperation of nearest neighbours
+
+```{r}
+expected_log_distance <- function(i, X){
+
+  d_ji <-  sapply(1:(nrow(X)-i), FUN = function(k) {
+      distance(xe = X[j[k]+i,], xi = X[k+i,]) # calc distance between nearest neighbours
+    })
+  
+  mean(log(d_ji))
+}
+
+t_end <- 25
+mean_log_distance <- sapply(0:t_end, FUN = expected_log_distance, X)
+deltaT <- 1
+time_innovation <- 0:t_end * deltaT
+plot(time_innovation, mean_log_distance, type = "l")
+
+```
+
+#### Step 4 - Use linear regression to estimate λ
+
+```{r}
+data <- data.frame(mean_log_distance, time_innovation)
+
+summary(lm(mean_log_distance ~ time_innovation, data[1:10,]))
+```
+
+* Using the Rosenstein approach we obtained $\lambda = 0.64555$ - see the beta parameter estimate.
+* The theoretical $\lambda = 0.693$ for the Logistic map. Our estimate is 'not bad' considering we only had a sample of 500 data points and we're estimating the parameter of a chaotic system!
